@@ -3,7 +3,9 @@
 Mirrors research_extractor.py's pattern: a small Pydantic schema, bounded
 retries, and a mockable `call_model` so the provider stays swappable/testable
 while production code keeps using the same OpenAI client already configured
-in ai_generator.py.
+in ai_generator.py (constructed lazily, on first real call, via
+ai_generator.get_client() -- importing this module never requires
+OPENAI_API_KEY).
 
 The model is given ONLY the lead's already-validated facts (each with its own
 id) and is instructed to cite a fact_id for every specific claim it makes
@@ -17,7 +19,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
-from modules.ai_generator import client
+from modules.ai_generator import get_client
 
 MODEL = "gpt-4o-mini"
 PROMPT_VERSION = "evidence_v1"
@@ -92,7 +94,7 @@ Write in {LANGUAGE_NAMES.get(language, language)}. Tone: {tone}. Length: {LENGTH
 
 
 def _call_openai(prompt: str):
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model=MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},

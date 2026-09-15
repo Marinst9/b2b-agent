@@ -1,9 +1,5 @@
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
+from modules.ai_generator import get_client
 
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def prompt_v1_basic(lead: dict) -> str:
     """Prompt 1 — Основен"""
@@ -17,7 +13,7 @@ def prompt_v1_basic(lead: dict) -> str:
     
     Максимум 4 реченици. Потпиши се како: Со почит, [Твојот тим]
     """
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=300
@@ -49,7 +45,7 @@ def prompt_v2_detailed(lead: dict) -> str:
     8. Potpiši se: So pochit, [Tvojot tim]
     9. NE zvuci kako spam
     """
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": "Ti si vrven ekspert za personaliziran B2B sales outreach."},
@@ -90,7 +86,7 @@ def prompt_v3_fewshot(lead: dict) -> str:
     Сега напиши слична порака за горниот примач. Биди конкретен и персонализиран.
     Максимум 5 реченици. Само македонски јазик.
     """
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": "Ти си експерт за B2B sales outreach. Пиши само на македонски јазик со кирилица."},

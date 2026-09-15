@@ -4,14 +4,48 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 PROMPT_VERSION = "basic_v1"
 MODEL = "gpt-4o-mini"
 
+_client: OpenAI | None = None
+
+
+class MissingProviderCredentialsError(Exception):
+    """Raised when a real OpenAI call is requested but OPENAI_API_KEY is not
+    configured. Only ever raised at actual call time (see get_client()) --
+    importing this module, or any module that imports from it, must never
+    require a real API key, since production code always has an injectable
+    `call_model` seam (tests/demo/evaluation mock mode use it) that never
+    reaches get_client() at all."""
+
+
+def get_client() -> OpenAI:
+    """Lazily constructs (and caches) the real OpenAI client on first use.
+
+    Every real-provider call in this codebase (here and in
+    research_extractor.py/draft_generator.py/research.py) goes through this
+    function rather than a module-level `client = OpenAI(...)` -- that keeps
+    importing api.py/these modules working with no OPENAI_API_KEY set at all
+    (required for CI, and for demo mode, where fake_providers.py replaces the
+    generate_* functions before they'd ever call this), while a real call
+    made without credentials still fails immediately with a clear error
+    instead of a cryptic one from deep inside the openai SDK.
+    """
+    global _client
+    if _client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise MissingProviderCredentialsError(
+                "OPENAI_API_KEY is not set -- cannot make a real OpenAI call. "
+                "Set OPENAI_API_KEY in .env (or the environment), or pass call_model=... "
+                "to use a mocked/fake provider instead."
+            )
+        _client = OpenAI(api_key=api_key)
+    return _client
+
 
 def _call_openai(prompt: str) -> str:
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model=MODEL,
         messages=[
             {"role": "system", "content": "Ti si ekspert za B2B sales outreach."},

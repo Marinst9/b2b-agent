@@ -2,7 +2,9 @@
 
 The model call is injectable (`call_model`) so the provider is fully mockable
 in tests while production code keeps using the same OpenAI client already
-configured in ai_generator.py. Output is always validated against the ExtractionResult/ExtractedFact Pydantic
+configured in ai_generator.py (constructed lazily, on first real call, via
+ai_generator.get_client() -- importing this module never requires
+OPENAI_API_KEY). Output is always validated against the ExtractionResult/ExtractedFact Pydantic
 schema. An invalid/malformed response is retried a bounded number of times;
 if every attempt still fails to produce a schema-valid response, extract_facts
 raises ExtractionError -- this is a genuine extraction FAILURE and must never
@@ -14,7 +16,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
-from modules.ai_generator import client
+from modules.ai_generator import get_client
 
 MODEL = "gpt-4o-mini"
 MAX_ATTEMPTS = 3  # 1 initial call + 2 retries
@@ -67,7 +69,7 @@ class ExtractionError(Exception):
 
 
 def _call_openai(page_text: str, source_url: str) -> str:
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model=MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
