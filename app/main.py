@@ -16,12 +16,19 @@ def run_agent(csv_path: str, filters: dict):
         first_name = name_parts[0] if len(name_parts) > 0 else ""
         last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-        email_data = get_email(first_name, last_name, "techsoft.mk")
-        email = email_data['email'] or "test@example.com"
+        email = lead.get('email') or None
+        website = lead.get('website') or None
+        if not email and website:
+            email_data = get_email(first_name, last_name, website)
+            email = email_data['email']
+
+        if not email:
+            print(f"Прескокнато: нема email за {lead['name']} (нема ниту email ниту website во CSV).")
+            continue
 
         message = generate_message(lead)
         send_email(email, f"Соработка со {lead['company']}", message)
-        
+
         time.sleep(2)
 
     print(f"\n=== Завршено! ===")

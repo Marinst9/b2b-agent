@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-unit-tests:
+    name: Backend unit tests (sqlite, no real broker)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run backend test suite (excluding real-broker integration tests)
+        run: python -m pytest --ignore=tests/integration -q
+
+  backend-integration-tests:
+    name: Real-broker integration tests (Redis + Postgres + Celery worker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: app
+        run: pip install -r requirements-dev.txt
+
+      - name: Start disposable integration infra (Redis, Postgres, real Celery worker)
+        run: |
+          docker compose -f docker-compose.integration.yml up -d --build \
+            redis-integration postgres-integration worker-integration
+
+      - name: Wait for the real worker to answer a control-plane ping
+        working-directory: app
+        run: |
+          python -c "
+          import time
+          import redis
+
+          deadline = time.time() + 90
+          while time.time() < deadline:
+              try:
+                  r = redis.Redis.from_url('redis://localhost:6380/0', socket_connect_timeout=2, socket_timeout=2)
+                  if r.ping():
+                      break
+              except Exception:
+                  pass
+              time.sleep(2)
+          else:
+              raise SystemExit('Redis never became reachable on localhost:6380')
+
+          import celery_app
+          deadline = time.time() + 90
+          while time.time() < deadline:
+              try:
+                  if celery_app.app.control.ping(timeout=3):
+                      print('Worker is up and answering control pings.')
+                      break
+              except Exception:
+                  pass
+              time.sleep(2)
+          else:
+              raise SystemExit('worker-integration never answered a control-plane ping in time.')
+          "
+        env:
+          CELERY_BROKER_URL: redis://localhost:6380/0
+          DATABASE_URL: postgresql://postgres:postgres@localhost:55432/b2b_agent_integration
+
+      - name: Run real-broker integration tests
+        working-directory: app
+        run: python -m pytest tests/integration -v
+        env:
+          INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:55432/b2b_agent_integration
+          INTEGRATION_CELERY_BROKER_URL: redis://localhost:6380/0
+
+      - name: Show worker logs (always, for diagnosis)
+        if: always()
+        run: docker compose -f docker-compose.integration.yml logs worker-integration
+
+      - name: Tear down disposable integration infra
+        if: always()
+        run: docker compose -f docker-compose.integration.yml down -v
+
+  frontend:
+    name: Frontend build & lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build

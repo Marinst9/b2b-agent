@@ -11,7 +11,19 @@ MAILTRAP_PORT = int(os.getenv("MAILTRAP_PORT", 2525))
 MAILTRAP_USERNAME = os.getenv("MAILTRAP_USERNAME")
 MAILTRAP_PASSWORD = os.getenv("MAILTRAP_PASSWORD")
 
+
+class DemoModeSendBlockedError(Exception):
+    """Raised whenever a real send is attempted while DEMO_MODE is active."""
+
+
 def send_email(to_email: str, subject: str, message: str) -> bool:
+    # Server-side prohibition, enforced at the lowest call site regardless of
+    # caller (API route, background job, CLI script) -- demo mode must never
+    # be able to send a real email even if some future code path forgets to
+    # check dry_run itself. Checked live (not cached at import time) so a
+    # single process's env var is always authoritative.
+    if os.getenv("DEMO_MODE") == "1":
+        raise DemoModeSendBlockedError("Real email sending is disabled while DEMO_MODE=1 -- this is a reproducible demo environment with synthetic data only.")
     try:
         msg = MIMEMultipart()
         msg['From'] = MAILTRAP_USERNAME

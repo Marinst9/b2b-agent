@@ -1,0 +1,60 @@
+# Background-processing infrastructure only: Redis (broker) + a Celery
+# worker + a Celery beat scheduler (for the periodic outbox-sweep and
+# lease-recovery tasks). The FastAPI app and its PostgreSQL database are NOT
+# part of this compose file -- they keep running exactly as they do today
+# (uvicorn on the host, a pre-existing local Postgres instance). Nothing
+# here creates, deletes, or migrates that database; the worker/beat
+# containers just connect to it as a client, the same way the FastAPI
+# process does.
+#
+# Quick start (Docker Desktop, Windows/Mac/Linux):
+#   1. cp .env.example .env   # then fill in real values
+#   2. docker compose up --build
+#
+# From inside a container, 127.0.0.1 refers to the CONTAINER, not your host
+# machine -- so DATABASE_URL is overridden below to reach your existing host
+# Postgres via Docker Desktop's `host.docker.internal` DNS name. Adjust the
+# port (5432 shown here) to match your actual local Postgres port from .env.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    build:
+      context: ./app
+    command: celery -A celery_app worker --loglevel=info --concurrency=2
+    env_file:
+      - .env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      # Placeholder -- replace the port with your actual local Postgres port.
+      DATABASE_URL: postgresql://postgres@host.docker.internal:5432/b2b_agent
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # no-op on Docker Desktop; needed on native Linux
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ./app
+    command: celery -A celery_app beat --loglevel=info
+    env_file:
+      - .env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres@host.docker.internal:5432/b2b_agent
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped

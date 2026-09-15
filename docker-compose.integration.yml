@@ -1,0 +1,98 @@
+# DISPOSABLE infrastructure for the real-broker integration tests
+# (app/tests/integration/). Entirely separate from docker-compose.yml (the
+# normal dev background-processing setup): different project name, different
+# host ports, and its own throwaway Postgres database -- so running this can
+# NEVER touch your development database or its data, and can safely be run
+# alongside (or instead of) docker-compose.yml without port collisions.
+#
+# Nothing here is persisted: no named volumes, so `docker compose down`
+# (or just letting the containers stop) discards all data. Run
+# `docker compose -f docker-compose.integration.yml down -v` between test
+# runs if you want a guaranteed-fresh database (the test suite also does its
+# own schema reset per test, so this is a belt-and-suspenders option, not a
+# requirement).
+#
+# Usage (automated pytest suite -- needs redis-integration,
+# postgres-integration, AND worker-integration; the suite drives the real
+# containerized worker over the network rather than starting its own
+# in-process one, so task execution genuinely happens inside a Linux
+# container, never natively on the host):
+#   docker compose -f docker-compose.integration.yml up -d --build redis-integration postgres-integration worker-integration
+#   cd app && ../venv/Scripts/python.exe -m pytest tests/integration -v
+#   cd .. && docker compose -f docker-compose.integration.yml down
+#
+# To ALSO manually watch worker/beat logs while driving the API by hand:
+#   docker compose -f docker-compose.integration.yml up -d --build
+#   docker compose -f docker-compose.integration.yml logs -f worker-integration
+name: b2b-agent-integration
+
+services:
+  redis-integration:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"  # distinct host port from the dev compose's 6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  postgres-integration:
+    image: postgres:16-alpine
+    ports:
+      - "55432:5432"  # distinct host port -- cannot collide with your dev Postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: b2b_agent_integration
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    # No `volumes:` entry on purpose -- an anonymous/ephemeral data
+    # directory that vanishes when the container is removed.
+
+  worker-integration:
+    build:
+      context: ./app
+    # Runs a REAL Celery worker inside this Linux container (not eager mode,
+    # not an in-process pytest thread on the host). External providers
+    # (website fetch, LLM, email) are mocked INSIDE this same container
+    # process by container_entrypoint.py/container_fakes.py, applied before
+    # the worker starts consuming tasks -- monkeypatching from the pytest
+    # process cannot reach across the container boundary, so mocking has to
+    # live here instead of on the test side for these tests.
+    command: python -m tests.integration.container_entrypoint
+    environment:
+      CELERY_BROKER_URL: redis://redis-integration:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres-integration:5432/b2b_agent_integration
+      # Fast, deterministic retries for the transient-failure test -- this
+      # container-only override never touches the dev .env's real backoff
+      # settings.
+      CELERY_TASK_RETRY_BACKOFF_SECONDS: "1"
+      # Never a real key -- container_fakes.py replaces every provider call
+      # before it would ever reach ai_generator.py; these just satisfy
+      # client-construction code that checks for a non-empty value.
+      OPENAI_API_KEY: test-placeholder-not-a-real-key
+      HUNTER_API_KEY: test-placeholder-not-a-real-key
+    depends_on:
+      redis-integration:
+        condition: service_healthy
+      postgres-integration:
+        condition: service_healthy
+
+  beat-integration:
+    build:
+      context: ./app
+    command: celery -A celery_app beat --loglevel=info
+    environment:
+      CELERY_BROKER_URL: redis://redis-integration:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres-integration:5432/b2b_agent_integration
+      OPENAI_API_KEY: test-placeholder-not-a-real-key
+      HUNTER_API_KEY: test-placeholder-not-a-real-key
+    depends_on:
+      redis-integration:
+        condition: service_healthy
+      postgres-integration:
+        condition: service_healthy
