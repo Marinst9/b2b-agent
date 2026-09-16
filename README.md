@@ -383,10 +383,3 @@ independent jobs:
   evidence-based `draft_generator.py` pipeline; be aware of the real cost
   before calling it.
 
-## Project origin
-
-Originally built as a graduation thesis project (FCSE UKIM, 2025/2026).
-Milestones 1–6 above extended that prototype (CSV import, Hunter.io lead
-enrichment, Mailtrap-based sending, and the V1/V2/V3 prompt-comparison
-dashboard — still present, see [Known limitations](#known-limitations))
-into the current persistent, evidence-based, and tested system.
